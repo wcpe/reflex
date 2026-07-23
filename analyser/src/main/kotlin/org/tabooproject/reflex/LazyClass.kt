@@ -109,10 +109,24 @@ open class LazyClass internal constructor(
         private data class CacheKey(val clazz: Class<*>, val dimensions: Int)
         private data class StringCacheKey(val source: String, val dimensions: Int, val isPrimitive: Boolean, val finder: ClassAnalyser.ClassFinder)
         private data class SupplierCacheKey(val source: String, val dimensions: Int, val isPrimitive: Boolean)
-        
+        private data class DeserializeCacheKey(val name: String, val dimensions: Int, val isPrimitive: Boolean)
+
         private val classCache = ConcurrentHashMap<CacheKey, WeakReference<LazyClass>>()
         private val stringCache = ConcurrentHashMap<StringCacheKey, WeakReference<LazyClass>>()
         private val supplierCache = ConcurrentHashMap<SupplierCacheKey, WeakReference<LazyClass>>()
+
+        /**
+         * 反序列化专用缓存（type 1，无注解的 LazyClass）
+         * 同一个类名在反序列化时只创建一个实例，避免大量重复对象
+         * 不使用 WeakReference，因为缓存实例被 ReflexClass 长期引用，不应被 GC 回收
+         */
+        private val deserializeCache = ConcurrentHashMap<DeserializeCacheKey, LazyClass>()
+
+        /**
+         * 反序列化专用缓存（type 2，注解为空的 LazyAnnotatedClass）
+         * 大多数方法参数没有注解，annotations 为空时与 LazyClass 行为一致，可安全去重
+         */
+        private val deserializeAnnotatedCache = ConcurrentHashMap<DeserializeCacheKey, LazyAnnotatedClass>()
 
         /**
          * 创建一个 LazyClass 实例
@@ -170,6 +184,9 @@ open class LazyClass internal constructor(
 
         /**
          * 从 BinaryReader 中读取一个 LazyClass 实例
+         *
+         * type 1（LazyClass，无注解）走反序列化缓存，同一类名只创建一个实例
+         * type 2（LazyAnnotatedClass，有注解）不走缓存，因为同一类名在不同参数位置可能有不同注解
          */
         fun of(reader: BinaryReader, classFinder: ClassAnalyser.ClassFinder?): LazyClass {
             val type = reader.readInt()
@@ -182,10 +199,23 @@ open class LazyClass internal constructor(
             val classGetter = Supplier { if (isPrimitive) Reflection.getPrimitiveType(name[0]) else finder.findClass(name) }
             when (type) {
                 1 -> {
-                    return LazyClass(name, dimensions, isInstant, isPrimitive, classGetter, name, simpleName)
+                    // type 1 无额外数据，缓存命中时 reader 位置已正确，零跳过开销
+                    val key = DeserializeCacheKey(name, dimensions, isPrimitive)
+                    return deserializeCache.computeIfAbsent(key) {
+                        LazyClass(name, dimensions, isInstant, isPrimitive, classGetter, name, simpleName)
+                    }
                 }
                 2 -> {
+                    // type 2 有额外的 annotations 列表，需要读取以推进 reader
                     val annotations = reader.readAnnotationList(classFinder)
+                    // 注解为空时与 LazyClass 行为一致，可安全按类名去重
+                    if (annotations.isEmpty()) {
+                        val key = DeserializeCacheKey(name, dimensions, isPrimitive)
+                        return deserializeAnnotatedCache.computeIfAbsent(key) {
+                            LazyAnnotatedClass(name, dimensions, isInstant, isPrimitive, classGetter, emptyList(), name, simpleName)
+                        }
+                    }
+                    // 注解非空时不去重，因为同一类名在不同参数位置可能有不同注解
                     return LazyAnnotatedClass(name, dimensions, isInstant, isPrimitive, classGetter, annotations, name, simpleName)
                 }
                 else -> {

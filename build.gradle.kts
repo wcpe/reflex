@@ -7,6 +7,14 @@ plugins {
     id("org.tabooproject.shrinkingkt") version "1.0.6" apply false
 }
 
+// 当前 fork HEAD 的短哈希（7 位），用于拼出发布版本号 <基础版本>-<短哈希>，与 taboolib「每个提交一版」的命名保持一致；
+// 取不到（非 git 环境等）时退化为 unknown，不阻塞构建。
+val gitShortHash: String = runCatching {
+    ProcessBuilder("git", "rev-parse", "--short=7", "HEAD")
+        .directory(rootDir).start()
+        .inputStream.bufferedReader().use { it.readText() }.trim()
+}.getOrNull()?.takeIf { it.isNotEmpty() } ?: "unknown"
+
 subprojects {
     apply(plugin = "java-library")
     apply(plugin = "maven-publish")
@@ -48,10 +56,10 @@ subprojects {
 
     publishing {
         repositories {
-            maven("https://repo.tabooproject.org/repository/releases") {
+            maven("https://maven.wcpe.top/repository/maven-tabooproject-release/") {
                 credentials {
-                    username = project.findProperty("taboolibUsername").toString()
-                    password = project.findProperty("taboolibPassword").toString()
+                    username = project.findProperty("tabooprojectUsername").toString()
+                    password = project.findProperty("tabooprojectPassword").toString()
                 }
                 authentication {
                     create<BasicAuthentication>("basic")
@@ -61,7 +69,10 @@ subprojects {
         }
         publications {
             create<MavenPublication>("maven") {
+                // 版本号：<基础版本>-<7 位短哈希>，与 taboolib 命名一致
+                version = "${project.version}-$gitShortHash"
                 from(components.findByName("java"))
+                println("> Apply \"$groupId:$artifactId:$version\"")
             }
         }
     }
