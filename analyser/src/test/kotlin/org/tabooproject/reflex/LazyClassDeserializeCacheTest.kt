@@ -1,14 +1,88 @@
 package org.tabooproject.reflex
 
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.tabooproject.reflex.asm.AsmSignature
 import org.tabooproject.reflex.serializer.BinaryReader
 import org.tabooproject.reflex.serializer.BinaryWriter
+import java.util.LinkedList
 
 /**
  * 验证 LazyClass 反序列化缓存：同一类名在多次反序列化中只创建一个 LazyClass 实例（type 1）
  */
 class LazyClassDeserializeCacheTest {
+
+    @Deprecated("测试注解顺序")
+    private class CollectionSample(private val number: Int) : Runnable {
+
+        private val text = number.toString()
+
+        override fun run() = Unit
+
+        fun value(): String = text
+    }
+
+    @Test
+    fun testSerializedIdentityFieldsAreNotMerged() {
+        LazyClass.clearDeserializeCaches()
+        val first = LazyClass.of(BinaryReader.from(makeBytes("sample.Outer\$Inner", "Inner", true)), null)
+        val second = LazyClass.of(BinaryReader.from(makeBytes("sample.Outer\$Inner", "Outer\$Inner", false)), null)
+
+        assertTrue(first !== second, "simpleName 或 isInstant 不同的对象不得复用")
+        assertTrue(first.simpleName == "Inner")
+        assertTrue(first.isInstant)
+        assertTrue(second.simpleName == "Outer\$Inner")
+        assertTrue(!second.isInstant)
+    }
+
+    @Test
+    fun testDifferentFindersAreIsolated() {
+        LazyClass.clearDeserializeCaches()
+        val bytes = makeBytes("sample.Same", "Same", false)
+        val stringFinder = ClassAnalyser.ClassFinder { String::class.java }
+        val integerFinder = ClassAnalyser.ClassFinder { Integer::class.java }
+
+        val first = LazyClass.of(BinaryReader.from(bytes), stringFinder)
+        val second = LazyClass.of(BinaryReader.from(bytes), integerFinder)
+
+        assertTrue(first !== second, "不同 finder 不得共享反序列化对象")
+        assertTrue(first.instance === String::class.java)
+        assertTrue(second.instance === Integer::class.java)
+    }
+
+    @Test
+    fun testSignatureFindersAreIsolated() {
+        AsmSignature.clearCache()
+        val stringFinder = ClassAnalyser.ClassFinder { String::class.java }
+        val integerFinder = ClassAnalyser.ClassFinder { Integer::class.java }
+
+        val first = AsmSignature.signatureToClass("Lsample/Same;", stringFinder).single()
+        val second = AsmSignature.signatureToClass("Lsample/Same;", integerFinder).single()
+
+        assertNotSame(first, second, "不同 finder 不得共享签名解析结果")
+        assertSame(String::class.java, first.instance)
+        assertSame(Integer::class.java, second.instance)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun testCollectionOrderIsPreservedWithoutLinkedListNodes() {
+        val source = CollectionSample::class.java
+        val structure = ClassAnalyser.analyseByReflection(source)
+
+        assertEquals(source.interfaces.map { it.name }, structure.interfaces.map { it.name })
+        assertEquals(source.declaredAnnotations.map { it.annotationClass.java.name }, structure.annotations.map { it.source.name })
+        assertEquals(source.declaredFields.map { it.name }, structure.fields.map { it.name })
+        assertEquals(source.declaredMethods.map { it.name }, structure.methods.map { it.name })
+        assertEquals(source.declaredConstructors.size, structure.constructors.size)
+
+        val collections = listOf(structure.interfaces, structure.annotations, structure.fields, structure.methods, structure.constructors)
+        assertFalse(collections.any { it is LinkedList<*> }, "只读结构集合不应为每个元素分配 LinkedList 节点")
+    }
 
     /**
      * 序列化一个 LazyClass（type 1），多次反序列化后应返回同一个实例
@@ -100,6 +174,17 @@ class LazyClassDeserializeCacheTest {
         val writer = BinaryWriter()
         val lc = LazyClass.of(name, dimensions = 0, isPrimitive = false) { Class.forName(name) }
         lc.writeTo(writer)
+        return writer.toByteArray()
+    }
+
+    private fun makeBytes(name: String, simpleName: String, isInstant: Boolean): ByteArray {
+        val writer = BinaryWriter()
+        writer.writeInt(1)
+        writer.writeNullableString(name)
+        writer.writeNullableString(simpleName)
+        writer.writeInt(0)
+        writer.writeBoolean(isInstant)
+        writer.writeBoolean(false)
         return writer.toByteArray()
     }
 }
