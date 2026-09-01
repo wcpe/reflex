@@ -344,6 +344,7 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
 
     companion object {
 
+        /** 保留 1.2.x 公开字段类型与缓存语义。 */
         val reflexClassCacheMap = ConcurrentHashMap<String, ReflexClass>()
 
         fun of(clazz: Class<*>): ReflexClass {
@@ -359,14 +360,12 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
         }
 
         fun of(clazz: Class<*>, mode: AnalyseMode, saving: Boolean): ReflexClass {
-            if (saving && reflexClassCacheMap.containsKey(clazz.name)) {
-                return reflexClassCacheMap[clazz.name]!!
+            if (saving) reflexClassCacheMap[clazz.name]?.let { return it }
+            val reflexClass = ReflexClass(ClassAnalyser.analyse(clazz, mode), mode)
+            if (!saving) {
+                return reflexClass
             }
-            return ReflexClass(ClassAnalyser.analyse(clazz, mode), mode).also {
-                if (saving) {
-                    reflexClassCacheMap[clazz.name] = it
-                }
-            }
+            return reflexClassCacheMap.putIfAbsent(clazz.name, reflexClass) ?: reflexClass
         }
 
         fun of(clazz: LazyClass, inputStream: InputStream): ReflexClass {
@@ -374,18 +373,25 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
         }
 
         fun of(clazz: LazyClass, inputStream: InputStream, saving: Boolean): ReflexClass {
-            if (saving && reflexClassCacheMap.containsKey(clazz.name)) {
-                return reflexClassCacheMap[clazz.name]!!
+            if (saving) reflexClassCacheMap[clazz.name]?.let { return it }
+            val reflexClass = ReflexClass(ClassAnalyser.analyseByASM(clazz, inputStream), AnalyseMode.ASM_ONLY)
+            if (!saving) {
+                return reflexClass
             }
-            return ReflexClass(ClassAnalyser.analyseByASM(clazz, inputStream), AnalyseMode.ASM_ONLY).also {
-                if (saving) {
-                    reflexClassCacheMap[clazz.name] = it
-                }
-            }
+            return reflexClassCacheMap.putIfAbsent(clazz.name, reflexClass) ?: reflexClass
         }
 
         fun of(reader: BinaryReader, classFinder: ClassAnalyser.ClassFinder? = null): ReflexClass {
             return ReflexClass(JavaClassStructure.of(reader, classFinder), AnalyseMode.ASM_ONLY)
+        }
+
+        /**
+         * 清空反射类缓存。
+         * 供宿主在插件卸载或定期维护时调用，主动释放不再使用的反射结构。
+         */
+        @JvmStatic
+        fun clearReflexClassCache() {
+            reflexClassCacheMap.clear()
         }
     }
 }
