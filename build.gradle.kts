@@ -48,10 +48,10 @@ subprojects {
 
     publishing {
         repositories {
-            maven("https://repo.tabooproject.org/repository/releases") {
+            maven("https://maven.wcpe.top/repository/maven-tabooproject-release/") {
                 credentials {
-                    username = project.findProperty("taboolibUsername").toString()
-                    password = project.findProperty("taboolibPassword").toString()
+                    username = project.findProperty("tabooprojectUsername").toString()
+                    password = project.findProperty("tabooprojectPassword").toString()
                 }
                 authentication {
                     create<BasicAuthentication>("basic")
@@ -61,7 +61,11 @@ subprojects {
         }
         publications {
             create<MavenPublication>("maven") {
+                // 发布坐标直接使用 gradle.properties 的 version（如 1.2.5-wcpe.1），与 GitHub Release tag 保持一致；
+                // 发布动作由 CI 在推送匹配 tag 时触发并校验版本一致性
+                version = project.version.toString()
                 from(components.findByName("java"))
+                println("> Apply \"$groupId:$artifactId:$version\"")
             }
         }
     }

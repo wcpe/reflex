@@ -3,19 +3,19 @@
 
 ```kotlin
 repositories {
-    maven { url = uri("https://repo.tabooproject.org/repository/releases/") }
+    maven { url = uri("https://maven.wcpe.top/repository/maven-tabooproject-release/") }
     mavenCentral()
 }
 
 dependencies {
     // 本体
-    implementation("org.tabooproject.reflex:analyser:{version}")
-    implementation("org.tabooproject.reflex:fast-instance-getter:{version}")
-    implementation("org.tabooproject.reflex:reflex:{version}") // 需要 analyser 模块
+    implementation("org.tabooproject.reflex:analyser:1.2.5-wcpe.1")
+    implementation("org.tabooproject.reflex:fast-instance-getter:1.2.5-wcpe.1")
+    implementation("org.tabooproject.reflex:reflex:1.2.5-wcpe.1") // 需要 analyser 模块
     // 本体依赖
-    implementation("org.ow2.asm:asm:9.2")
-    implementation("org.ow2.asm:asm-util:9.2")
-    implementation("org.ow2.asm:asm-commons:9.2")
+    implementation("org.ow2.asm:asm:9.6")
+    implementation("org.ow2.asm:asm-util:9.6")
+    implementation("org.ow2.asm:asm-commons:9.6")
     implementation(kotlin("stdlib"))
 }
 ```
