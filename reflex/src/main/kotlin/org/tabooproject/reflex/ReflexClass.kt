@@ -4,7 +4,6 @@ import org.tabooproject.reflex.serializer.BinaryReader
 import org.tabooproject.reflex.serializer.BinarySerializable
 import org.tabooproject.reflex.serializer.BinaryWriter
 import java.io.InputStream
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * @author 坏黑
@@ -344,8 +343,14 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
 
     companion object {
 
-        /** 保留 1.2.x 公开字段类型与缓存语义。 */
-        val reflexClassCacheMap = ConcurrentHashMap<String, ReflexClass>()
+        /**
+         * 保留 1.2.x 公开字段类型与缓存语义。
+         *
+         * 使用弱引用缓存：被缓存的 ReflexClass 在无外部强引用时会被 GC 回收，
+         * 活跃使用中的对象由调用方强引用持有，不受影响；缓存失效后重新计算。
+         * 避免长期运行后反射结构对象无限累积（内存膨胀）。
+         */
+        val reflexClassCacheMap = WeakCache<String, ReflexClass>()
 
         fun of(clazz: Class<*>): ReflexClass {
             return of(clazz, true)
@@ -360,12 +365,12 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
         }
 
         fun of(clazz: Class<*>, mode: AnalyseMode, saving: Boolean): ReflexClass {
-            if (saving) reflexClassCacheMap[clazz.name]?.let { return it }
+            if (saving) reflexClassCacheMap.get(clazz.name)?.let { return it }
             val reflexClass = ReflexClass(ClassAnalyser.analyse(clazz, mode), mode)
             if (!saving) {
                 return reflexClass
             }
-            return reflexClassCacheMap.putIfAbsent(clazz.name, reflexClass) ?: reflexClass
+            return reflexClassCacheMap.computeIfAbsent(clazz.name) { reflexClass }
         }
 
         fun of(clazz: LazyClass, inputStream: InputStream): ReflexClass {
@@ -373,12 +378,12 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
         }
 
         fun of(clazz: LazyClass, inputStream: InputStream, saving: Boolean): ReflexClass {
-            if (saving) reflexClassCacheMap[clazz.name]?.let { return it }
+            if (saving) reflexClassCacheMap.get(clazz.name)?.let { return it }
             val reflexClass = ReflexClass(ClassAnalyser.analyseByASM(clazz, inputStream), AnalyseMode.ASM_ONLY)
             if (!saving) {
                 return reflexClass
             }
-            return reflexClassCacheMap.putIfAbsent(clazz.name, reflexClass) ?: reflexClass
+            return reflexClassCacheMap.computeIfAbsent(clazz.name) { reflexClass }
         }
 
         fun of(reader: BinaryReader, classFinder: ClassAnalyser.ClassFinder? = null): ReflexClass {
