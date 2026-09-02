@@ -4,7 +4,6 @@ import org.tabooproject.reflex.serializer.BinaryReader
 import org.tabooproject.reflex.serializer.BinarySerializable
 import org.tabooproject.reflex.serializer.BinaryWriter
 import java.io.InputStream
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * @author 坏黑
@@ -344,7 +343,15 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
 
     companion object {
 
-        val reflexClassCacheMap = ConcurrentHashMap<String, ReflexClass>()
+        /**
+         * 1.3.0 起公开缓存类型由 ConcurrentHashMap 调整为带 LRU 强引用保护的 WeakCache，
+         * 属破坏性变更：1.2.x 的源码与二进制调用方均不再兼容。
+         *
+         * 使用弱引用缓存：被缓存的 ReflexClass 在无外部强引用时会被 GC 回收，
+         * 活跃使用中的对象由调用方强引用持有，不受影响；缓存失效后重新计算。
+         * 避免长期运行后反射结构对象无限累积（内存膨胀）。
+         */
+        val reflexClassCacheMap = WeakCache<String, ReflexClass>()
 
         fun of(clazz: Class<*>): ReflexClass {
             return of(clazz, true)
@@ -359,14 +366,12 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
         }
 
         fun of(clazz: Class<*>, mode: AnalyseMode, saving: Boolean): ReflexClass {
-            if (saving && reflexClassCacheMap.containsKey(clazz.name)) {
-                return reflexClassCacheMap[clazz.name]!!
+            if (saving) reflexClassCacheMap.get(clazz.name)?.let { return it }
+            val reflexClass = ReflexClass(ClassAnalyser.analyse(clazz, mode), mode)
+            if (!saving) {
+                return reflexClass
             }
-            return ReflexClass(ClassAnalyser.analyse(clazz, mode), mode).also {
-                if (saving) {
-                    reflexClassCacheMap[clazz.name] = it
-                }
-            }
+            return reflexClassCacheMap.computeIfAbsent(clazz.name) { reflexClass }
         }
 
         fun of(clazz: LazyClass, inputStream: InputStream): ReflexClass {
@@ -374,18 +379,25 @@ class ReflexClass(val structure: ClassStructure, val mode: AnalyseMode) : Binary
         }
 
         fun of(clazz: LazyClass, inputStream: InputStream, saving: Boolean): ReflexClass {
-            if (saving && reflexClassCacheMap.containsKey(clazz.name)) {
-                return reflexClassCacheMap[clazz.name]!!
+            if (saving) reflexClassCacheMap.get(clazz.name)?.let { return it }
+            val reflexClass = ReflexClass(ClassAnalyser.analyseByASM(clazz, inputStream), AnalyseMode.ASM_ONLY)
+            if (!saving) {
+                return reflexClass
             }
-            return ReflexClass(ClassAnalyser.analyseByASM(clazz, inputStream), AnalyseMode.ASM_ONLY).also {
-                if (saving) {
-                    reflexClassCacheMap[clazz.name] = it
-                }
-            }
+            return reflexClassCacheMap.computeIfAbsent(clazz.name) { reflexClass }
         }
 
         fun of(reader: BinaryReader, classFinder: ClassAnalyser.ClassFinder? = null): ReflexClass {
             return ReflexClass(JavaClassStructure.of(reader, classFinder), AnalyseMode.ASM_ONLY)
+        }
+
+        /**
+         * 清空反射类缓存。
+         * 供宿主在插件卸载或定期维护时调用，主动释放不再使用的反射结构。
+         */
+        @JvmStatic
+        fun clearReflexClassCache() {
+            reflexClassCacheMap.clear()
         }
     }
 }
